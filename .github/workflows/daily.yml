@@ -1,0 +1,29 @@
+name: Daily Stock Poster
+on:
+  workflow_dispatch: # Allows manual button click
+  schedule:
+    - cron: '30 2 * * *' # Runs daily at 2:30 AM UTC
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Libraries
+        run: pip install pandas Pillow
+
+      - name: Run Script
+        run: python generate_poster.py
+
+      - name: Upload Image Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: stock-poster
+          path: Stock_News_*.jpg
