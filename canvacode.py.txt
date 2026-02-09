@@ -2,210 +2,168 @@ import pandas as pd
 import textwrap
 import os
 import glob
+import requests
+from io import BytesIO
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
 
 # ==========================================
-# CONFIGURATION
+# 1. PASTE YOUR GOOGLE SHEET LINK HERE
 # ==========================================
-INPUT_CSV = "data.csv"
-LOGO_FOLDER = "logos"
-OUTPUT_FILENAME = f"Stock_News_{datetime.now().strftime('%Y-%m-%d')}.jpg"
+# Replace the link below with your "Publish to Web" CSV link
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1tHWZ94SGB9nr0WvgXjMMhrtaa5t1R_r1yzfNPoFFTqU/edit?usp=sharing"
 
-# Canvas Settings
-CANVAS_WIDTH = 1200
-MARGIN = 40
-COL_GAP = 40
-COL_WIDTH = (CANVAS_WIDTH - (2 * MARGIN) - COL_GAP) // 2
-
-# Colors
-BG_COLOR = "#EDF7F2"     # Light Mint
-CARD_COLOR = "#FFFFFF"   # White
-TEXT_COLOR = "#1F2937"   # Dark Grey
-ACCENT_COLOR = "#047857" # Green for headers
+# Folder where your logos are on GitHub
+LOGO_FOLDER = "logos" 
 
 # ==========================================
-# SMART LOGO MATCHER
+# 2. THE SMART LOGIC (DO NOT TOUCH)
 # ==========================================
-def get_logo_path(company_name):
+
+def get_smart_logo(company_name):
     """
-    Tries to find a matching logo in the logos/ folder.
-    Logic: Removes spaces and converts to lowercase.
-    Example: 'Bajaj Finance' -> looks for 'bajajfinance.png' or 'bajajfinance.jpg'
+    Finds the logo even if spelling is slightly different.
+    Example: 'Bajaj Finance' in sheet -> finds 'bajajfinance.png' in folder.
     """
     if not os.path.exists(LOGO_FOLDER):
         return None
     
-    # Normalize company name (remove spaces, symbols, lowercase)
+    # 1. Clean the name (remove spaces, make lowercase)
+    # "HCL Tech" becomes "hcltech"
     clean_name = "".join(e for e in company_name if e.isalnum()).lower()
     
-    # Search for files starting with the clean name
+    # 2. Search the folder for any file starting with that name
     search_pattern = os.path.join(LOGO_FOLDER, f"{clean_name}*")
     matches = glob.glob(search_pattern)
     
     if matches:
-        return matches[0] # Return first match found
+        return matches[0] # Found it!
     return None
 
-def process_logo(path):
-    """Resizes and masks the logo into a circle"""
+def process_logo_image(path):
+    """Resizes logo to look good on the card"""
     try:
         img = Image.open(path).convert("RGBA")
-        
-        # Resize maintaining aspect ratio
+        # Resize to 80 pixels wide
         base_width = 80
         w_percent = (base_width / float(img.size[0]))
         h_size = int((float(img.size[1]) * float(w_percent)))
         img = img.resize((base_width, h_size), Image.Resampling.LANCZOS)
-        
         return img
     except:
         return None
 
-# ==========================================
-# MAIN ENGINE
-# ==========================================
-def generate_poster():
-    print("🚀 Starting Generator...")
+def create_poster():
+    print("🚀 Connecting to Google Sheet...")
     
-    # 1. Load Data
+    # Read Data from the Link
     try:
-        df = pd.read_csv(INPUT_CSV)
-        print(f"✅ Loaded {len(df)} rows of data.")
+        df = pd.read_csv(SHEET_URL)
+        print(f"✅ Downloaded {len(df)} rows of data.")
     except Exception as e:
-        print(f"❌ Error reading CSV: {e}")
+        print(f"❌ Error: Could not read Google Sheet. Check the link. {e}")
         return
 
-    # 2. Group Data by Company
-    grouped = df.groupby('Company')
+    # Setup Canvas
+    CANVAS_WIDTH = 1200
+    MARGIN = 40
+    COL_WIDTH = (CANVAS_WIDTH - (2 * MARGIN) - 40) // 2
     
-    # 3. Load Fonts (Try to load system fonts or fall back to default)
-    try:
-        # Update these paths to your specific .ttf files if you have them in a /fonts folder
-        # font_title = ImageFont.truetype("fonts/Roboto-Bold.ttf", 40)
-        font_title = ImageFont.truetype("arial.ttf", 40)
-        font_company = ImageFont.truetype("arialbd.ttf", 28) # Bold
-        font_text = ImageFont.truetype("arial.ttf", 24)
-        font_source = ImageFont.truetype("ariali.ttf", 18) # Italic
-    except:
-        print("⚠️ Custom fonts not found, using default.")
-        font_title = ImageFont.load_default()
-        font_company = ImageFont.load_default()
-        font_text = ImageFont.load_default()
-        font_source = ImageFont.load_default()
+    # Fonts (Using default to avoid errors, but you can upload fonts to GitHub too)
+    font_title = ImageFont.load_default() 
+    font_text = ImageFont.load_default()
 
-    # 4. Calculate Layout (The "Expert Brain" Logic)
+    # Process Cards
     cards = []
-    
-    for company, group in grouped:
-        # -- PRE-CALCULATE HEIGHT --
-        
-        # Header area (Logo + Company Name)
-        current_card_h = 20 + 40 + 20 
-        
-        items = []
-        for _, row in group.iterrows():
-            news_text = str(row['News'])
-            source_text = str(row['Source'])
-            
-            # Wrap text to fit column width
-            # Approx 15 pixels per char for font size 24
-            chars_per_line = int((COL_WIDTH - 40) / 13) 
-            wrapped_lines = textwrap.wrap(news_text, width=chars_per_line)
-            
-            # Calculate height for this news item
-            line_height = 30
-            text_block_h = len(wrapped_lines) * line_height
-            
-            items.append({
-                'lines': wrapped_lines,
-                'source': source_text,
-                'h': text_block_h + 35 # +35 for source padding
-            })
-            
-            current_card_h += text_block_h + 35
-        
-        # Add bottom padding
-        current_card_h += 20
-        
-        # Find Logo
-        logo_path = get_logo_path(company)
+    grouped = df.groupby('Company') # Group rows by Company Name
 
+    for company, group in grouped:
+        # Calculate Height needed
+        current_h = 80 # Header space
+        items = []
+        
+        for _, row in group.iterrows():
+            news = str(row['News'])
+            source = str(row['Source'])
+            
+            # Wrap text (break long lines)
+            wrapper = textwrap.TextWrapper(width=45) 
+            lines = wrapper.wrap(news)
+            
+            block_h = len(lines) * 30 + 35 # 30px per line + padding
+            items.append({'lines': lines, 'source': source, 'h': block_h})
+            current_h += block_h
+
+        # Find Logo
+        logo_file = get_smart_logo(company)
+        
         cards.append({
             'company': company,
-            'logo_path': logo_path,
+            'logo': logo_file,
             'items': items,
-            'height': current_card_h
+            'height': current_h + 20
         })
 
-    # 5. Distribute into 2 Columns (Masonry / Waterfall)
+    # Sort into Columns (Masonry Layout)
     col1, col2 = [], []
     h1, h2 = 0, 0
     
     for card in cards:
         if h1 <= h2:
             col1.append(card)
-            h1 += card['height'] + COL_GAP
+            h1 += card['height'] + 40
         else:
             col2.append(card)
-            h2 += card['height'] + COL_GAP
+            h2 += card['height'] + 40
 
-    # 6. Draw Image
-    total_height = max(h1, h2) + 350 # Header + Footer space
-    img = Image.new('RGB', (CANVAS_WIDTH, total_height), BG_COLOR)
+    # Draw the Image
+    total_h = max(h1, h2) + 300
+    img = Image.new('RGB', (CANVAS_WIDTH, total_h), "#EDF7F2")
     draw = ImageDraw.Draw(img)
     
-    # -- Header --
-    date_str = datetime.now().strftime("%A, %d %B %Y")
-    draw.text((50, 50), "Stock News Bytes", fill="#111827", font=font_title)
-    draw.text((50, 100), date_str, fill="#4B5563", font=font_company)
-    draw.line((50, 140, CANVAS_WIDTH - 50, 140), fill="#D1D5DB", width=2)
+    # Draw Title
+    today = datetime.now().strftime("%A, %d %B %Y")
+    draw.text((50, 50), "STOCK NEWS BYTES", fill="#047857", font=font_title)
+    draw.text((50, 70), today, fill="#000", font=font_text)
 
-    # -- Columns --
-    def draw_column(col_cards, start_x, start_y):
-        curr_y = start_y
-        for card in col_cards:
-            # Card Background
-            draw.rectangle((start_x, curr_y, start_x + COL_WIDTH, curr_y + card['height']), fill=CARD_COLOR)
+    # Helper to draw a column
+    def paint_column(card_list, x_pos):
+        y_pos = 150
+        for card in card_list:
+            # White Card Box
+            draw.rectangle((x_pos, y_pos, x_pos + COL_WIDTH, y_pos + card['height']), fill="white")
             
-            # Logo
-            if card['logo_path']:
-                logo_img = process_logo(card['logo_path'])
+            # Draw Logo
+            if card['logo']:
+                logo_img = process_logo_image(card['logo'])
                 if logo_img:
-                    img.paste(logo_img, (start_x + 20, curr_y + 20), logo_img)
+                    img.paste(logo_img, (x_pos + 20, y_pos + 20), logo_img)
             else:
-                # Draw Circle Placeholder if no logo
-                draw.ellipse((start_x + 20, curr_y + 20, start_x + 80, curr_y + 80), fill="#F3F4F6")
-                draw.text((start_x + 35, curr_y + 35), card['company'][0], fill=TEXT_COLOR, font=font_company)
+                # Fallback if no logo found
+                draw.rectangle((x_pos+20, y_pos+20, x_pos+60, y_pos+60), fill="#eee")
+                draw.text((x_pos+30, y_pos+30), card['company'][0], fill="black")
 
             # Company Name
-            draw.text((start_x + 100, curr_y + 35), card['company'].upper(), fill=ACCENT_COLOR, font=font_company)
-            
-            # News Items
-            content_y = curr_y + 90
+            draw.text((x_pos + 110, y_pos + 30), card['company'].upper(), fill="#047857", font=font_title)
+
+            # News Text
+            text_y = y_pos + 80
             for item in card['items']:
                 for line in item['lines']:
-                    draw.text((start_x + 20, content_y), line, fill="#374151", font=font_text)
-                    content_y += 30
-                
-                # Source
-                draw.text((start_x + COL_WIDTH - 150, content_y), item['source'], fill="#9CA3AF", font=font_source)
-                content_y += 35 # Gap between items
-                
-            curr_y += card['height'] + COL_GAP
+                    draw.text((x_pos + 20, text_y), line, fill="#333", font=font_text)
+                    text_y += 30
+                draw.text((x_pos + 20, text_y), item['source'], fill="gray", font=font_text)
+                text_y += 35
+            
+            y_pos += card['height'] + 40
 
-    draw_column(col1, MARGIN, 180)
-    draw_column(col2, MARGIN + COL_WIDTH + COL_GAP, 180)
+    paint_column(col1, MARGIN)
+    paint_column(col2, MARGIN + COL_WIDTH + 40)
 
-    # -- Footer --
-    footer_y = total_height - 120
-    draw.rectangle((0, footer_y, CANVAS_WIDTH, total_height), fill=ACCENT_COLOR)
-    draw.text((MARGIN, footer_y + 30), "Sampadha Research & Financial Consultants", fill="#FFFFFF", font=font_company)
-    draw.text((MARGIN, footer_y + 70), "Disclaimer: Informational purposes only. Consult your financial advisor.", fill="#D1D5DB", font=font_source)
-
-    # 7. Save
-    img.save(OUTPUT_FILENAME)
-    print(f"🎉 Success! Image saved as: {OUTPUT_FILENAME}")
+    # Save
+    filename = f"Poster_{datetime.now().strftime('%Y-%m-%d')}.jpg"
+    img.save(filename)
+    print(f"🎉 Created: {filename}")
 
 if __name__ == "__main__":
-    generate_poster()
+    create_poster()
