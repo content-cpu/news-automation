@@ -1,0 +1,29 @@
+name: Daily Stock Poster
+on:
+  workflow_dispatch: # Allows you to click a button to run it manually
+  schedule:
+    - cron: '30 2 * * *' # Runs daily at 2:30 AM UTC
+
+jobs:
+  make_poster:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get Code
+        uses: actions/checkout@v3
+
+      - name: Install Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Tools
+        run: pip install -r requirements.txt
+
+      - name: Run The Chef
+        run: python generate_poster.py
+
+      - name: Save the Image
+        uses: actions/upload-artifact@v3
+        with:
+          name: Daily-Poster
+          path: Poster_*.jpg
