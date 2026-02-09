@@ -1,29 +1,38 @@
 name: Daily Stock Poster
+
 on:
-  workflow_dispatch: # Allows manual button click
+  workflow_dispatch:      # Allows you to click the "Run workflow" button manually
   schedule:
-    - cron: '30 2 * * *' # Runs daily at 2:30 AM UTC
+    - cron: '30 2 * * *'  # Runs automatically at 02:30 UTC (8:00 AM IST) every day
 
 jobs:
-  generate:
+  build_and_generate:
     runs-on: ubuntu-latest
+    
     steps:
+      # 1. Check out the code (Updated to v4)
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
+      # 2. Set up Python (Updated to v5)
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11' # Updated to a newer, faster Python version
 
-      - name: Install Libraries
-        run: pip install pandas Pillow
+      # 3. Install the libraries
+      - name: Install Dependencies
+        run: |
+          pip install pandas Pillow requests
 
-      - name: Run Script
+      # 4. Run your Python script
+      - name: Run Generator Script
         run: python generate_poster.py
 
+      # 5. Upload the result (Updated to v4 as requested)
       - name: Upload Image Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: stock-poster
-          path: Stock_News_*.jpg
+          name: daily-stock-poster
+          path: *.jpg             # This wildcard finds any JPG file generated
+          retention-days: 5       # Keeps the file downloadable for 5 days
